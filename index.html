@@ -6,12 +6,19 @@
     <title>Teachable Machine Image Model - File Upload</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
         }
         .container {
             margin: 20px;
+        }
+        .model-inputs {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
         }
         .preview {
             margin: 10px;
@@ -34,14 +41,21 @@
 </head>
 <body>
     <div class="container">
-        <h1>Teachable Machine Image Model - File Upload</h1>
-        <label for="model-url">Enter Teachable Machine Model URL:</label>
-        <input type="text" id="model-url" placeholder="https://teachablemachine.withgoogle.com/models/your-model-id/" size="50">
-        <button onclick="loadModel()">Load Model</button>
+        <h1>Teachable Machine Image Model Evaluation</h1>
         
-        <h2>Upload Images</h2>
+        <!-- Model URL and Zip Upload on the Same Line -->
+        <div class="model-inputs">
+            <label for="model-url">Model URL:</label>
+            <input type="text" id="model-url" placeholder="https://teachablemachine.withgoogle.com/models/your-model-id/" size="50">
+            <span>oder</span>
+            <label for="model-zip">Model ZIP:</label>
+            <input type="file" id="model-zip" accept=".zip">
+            <button onclick="loadModel()">Model laden</button>
+        </div>
+        
+        <h2>Bilder hochladen</h2>
         <input type="file" id="image-upload" multiple accept="image/*">
-        <button onclick="handleFiles()">Submit Images</button>
+        <button onclick="handleFiles()">Bilder klassifizieren</button>
 
         <h2>Predictions</h2>
         <div id="images-preview"></div>
@@ -52,21 +66,66 @@
 
         async function loadModel() {
             const urlInput = document.getElementById("model-url").value;
-            if (!urlInput) {
-                alert("Please enter a model URL.");
-                return;
+            const zipFileInput = document.getElementById("model-zip").files[0];
+
+            if (zipFileInput) {
+                await loadModelFromZip(zipFileInput);
+            } else if (urlInput) {
+                await loadModelFromURL(urlInput);
+            } else {
+                alert("Bitte Model URL oder Model zip Archiv angeben.");
             }
-            const modelURL = urlInput + "model.json";
-            const metadataURL = urlInput + "metadata.json";
+        }
+
+    async function loadModelFromURL(url) {
+        // Extract model ID from the input URL (e.g., "https://teachablemachine.withgoogle.com/models/8aB7cbfSX/")
+        const modelIdMatch = url.match(/models\/([a-zA-Z0-9_-]+)/);
+        if (!modelIdMatch) {
+            alert("Ungültiges URL format. Bitte eine gültige Teachable Machine model URL angeben.");
+            return;
+        }
+        const modelId = modelIdMatch[1];
+
+        // Construct the final URLs for model files (model.json and weights.bin). Use timestamp to prevent caching of the model.
+        const baseURL = "https://storage.googleapis.com/tm-model"
+        const timestamp = new Date().getTime();
+        const modelURL = `${baseURL}/${modelId}/model.json?timestamp=${timestamp}`;
+        const metadataURL = `${baseURL}/${modelId}/metadata.json?timestamp=${timestamp}`;
+
+        try {
+            // Load the model and metadata using the final URLs
+            model = await tmImage.load(modelURL, metadataURL);
+            maxPredictions = model.getTotalClasses();
+            alert("Model erfolgreich geladen!");
+        } catch (error) {
+            alert("Fehler beim Laden des Model. Bitte URL prüfen.");
+            console.error(error);
+        }
+    }
+
+        async function loadModelFromZip(zipFile) {
+            const jsZip = new JSZip();
+            const zip = await jsZip.loadAsync(zipFile);
 
             try {
-                model = await tmImage.load(modelURL, metadataURL);
+                const modelJson = await readBlobFromZip(zip, 'model.json');
+                const weightsBin = await readBlobFromZip(zip, 'weights.bin');
+                const metadataJson = await readBlobFromZip(zip, 'metadata.json');
+
+                model = await tmImage.loadFromFiles(modelJson, weightsBin, metadataJson);
                 maxPredictions = model.getTotalClasses();
-                alert("Model loaded successfully!");
+                alert("Model erfolgreich geladen!");
             } catch (error) {
-                alert("Failed to load model. Please check the URL.");
+                alert("Fehler beim Laden des Model zip Archivs. Das zip Archiv muss jeweils eine 'model.json', 'weights.bin' und 'metadata.json' enthalten.");
                 console.error(error);
             }
+        }
+
+        async function readBlobFromZip(zip, filename) {
+            const file = zip.file(filename);
+            if (!file) throw new Error(`File "${filename}" not found in zip.`);
+            const fileData = await file.async('blob');
+            return new File([fileData], filename);
         }
 
         function handleFiles() {
@@ -75,13 +134,13 @@
             previewContainer.innerHTML = '';
 
             if (!model) {
-                alert("Please load a model first.");
+                alert("Bitte zuerst ein Model laden.");
                 return;
             }
 
             const files = input.files;
             if (files.length === 0) {
-                alert("No files selected.");
+                alert("Keine Bilder ausgewählt.");
                 return;
             }
 
@@ -95,7 +154,6 @@
                         imgElement.onload = async function() {
                             const previewDiv = createPreview(imgElement);
 
-                            // Make predictions after the image is fully loaded
                             const prediction = await model.predict(imgElement);
                             const predictionDiv = document.createElement('div');
                             predictionDiv.innerHTML = 
